@@ -205,6 +205,7 @@ INSTALLED_APPS.extend([
     'apps.validate',
     'apps.workspace',
     'apps.macros',
+    'apps.archive_broadcast'
 ])
 
 RESOURCE_METHODS = ['GET', 'POST']

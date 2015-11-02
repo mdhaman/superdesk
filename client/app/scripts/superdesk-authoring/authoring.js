@@ -2308,8 +2308,8 @@
         };
     }
 
-    headerInfoDirective.$inject = ['familyService', 'authoringWidgets', 'authoring', 'archiveService'];
-    function headerInfoDirective(familyService, authoringWidgets, authoring, archiveService) {
+    headerInfoDirective.$inject = ['api', 'familyService', 'authoringWidgets', 'authoring', '$rootScope', 'archiveService'];
+    function headerInfoDirective(api, familyService, authoringWidgets, authoring, $rootScope, archiveService) {
         return {
             templateUrl: 'scripts/superdesk-authoring/views/header-info.html',
             require: '^sdAuthoringWidgets',
@@ -2335,6 +2335,12 @@
 
                         scope.activateWidget = function () {
                             WidgetsManagerCtrl.activate(relatedItemWidget[0]);
+                        };
+
+                        scope.previewMasterStory = function () {
+                            return api.find('archive', item.broadcast.master_id).then(function(item) {
+                                $rootScope.$broadcast('broadcast:preview', {'item': item});
+                            });
                         };
                     }
 

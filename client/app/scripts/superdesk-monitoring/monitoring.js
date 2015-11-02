@@ -282,6 +282,10 @@
                 });
                 scope.$on('item:unspike', queryItems);
                 scope.$on('$routeUpdate', queryItems);
+                scope.$on('broadcast:preview', function(event, args) {
+                    scope.previewingBroadcast = true;
+                    preview(args.item);
+                });
 
                 scope.$on('content:update', function(event, data) {
                     if (cards.shouldUpdate(scope.group, data)) {
@@ -292,8 +296,8 @@
                 scope.$on('$destroy', unbindActionKeyShortcuts);
 
                 scope.$watch('selected', function(newVal, oldVal) {
-                    if(!newVal && scope.previewingBroadcast) {
-                        scope.previewingBroadcast = false; 
+                    if (!newVal && scope.previewingBroadcast) {
+                        scope.previewingBroadcast = false;
                     }
                 });
 

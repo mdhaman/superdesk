@@ -200,4 +200,24 @@ describe('authoring', function() {
 
         expect(element(by.className('authoring-embedded')).isDisplayed()).toBe(false);
     });
+
+    it('broadcast operation', function() {
+        expect(monitoring.getTextItem(1, 0)).toBe('item5');
+        monitoring.actionOnItem('Edit', 1, 0);
+        authoring.publish();
+        monitoring.showSearch();
+        search.setListView();
+        search.showCustomSearch();
+        search.toggleByType('text');
+        expect(search.getTextItem(0)).toBe('item5');
+
+        search.actionOnItem('Create Broadcast', 0);
+        expect(element(by.className('content-item-preview')).isDisplayed()).toBe(true);
+        expect(monitoring.getPreviewTitle()).toBe('item5');
+        monitoring.closePreview();
+
+        authoring.linkToMasterButton.click();
+        expect(monitoring.getPreviewTitle()).toBe('item5');
+        authoring.close();
+    });
 });

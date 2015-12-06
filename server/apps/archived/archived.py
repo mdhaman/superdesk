@@ -9,23 +9,23 @@
 # at https://www.sourcefabric.org/superdesk/license
 
 from eve.utils import config
-
-from apps.publish.published_item import PublishedItemResource, PublishedItemService
+import logging
+from apps.publish.published_item import PublishedItemService, PublishedItemResource
+from apps.packages import PackageService
 from superdesk.metadata.utils import aggregations
+from superdesk.metadata.item import CONTENT_TYPE, ITEM_TYPE
+from superdesk.metadata.packages import PACKAGE_TYPE, TAKES_PACKAGE, RESIDREF, SEQUENCE
 from superdesk.notification import push_notification
 from apps.archive.common import get_user
 import superdesk
-from superdesk.utc import utcnow
 
-query_filters = [{'allow_post_publish_actions': False}, {'can_be_removed': False}]
+logger = logging.getLogger(__name__)
 
 
 class ArchivedResource(PublishedItemResource):
     datasource = {
-        'source': 'published',
         'search_backend': 'elastic',
         'aggregations': aggregations,
-        'elastic_filter': {'and': [{'term': query_filters[0]}, {'term': query_filters[1]}]},
         'default_sort': [('_updated', -1)],
         'projection': {
             'old_version': 0,
@@ -37,30 +37,35 @@ class ArchivedResource(PublishedItemResource):
     item_methods = ['GET', 'DELETE']
 
     privileges = {'DELETE': 'archived'}
+    additional_lookup = {
+        'url': 'regex("[\w,.:-]+")',
+        'field': 'item_id'
+    }
 
 
 class ArchivedService(PublishedItemService):
 
-    def find_by_item_ids(self, item_ids):
-        """
-        Fetches items whose item_id is passed in item_ids
+    def on_create(self, docs):
+        package_service = PackageService()
 
-        :param item_ids: list of item_id
-        :return: items from archived collection
-        """
+        for doc in docs:
+            doc.pop(config.ID_FIELD, None)
+            doc.pop('_type', None)
+            doc.pop('lock_user', None)
+            doc.pop('lock_time', None)
+            doc.pop('lock_session', None)
 
-        query = {'$and': [{'item_id': {'$in': item_ids}}, query_filters[0], query_filters[1]]}
-        return super().get_from_mongo(req=None, lookup=query)
+            if doc.get(ITEM_TYPE) == CONTENT_TYPE.COMPOSITE:
+                is_takes_package = doc.get(PACKAGE_TYPE) == TAKES_PACKAGE
+                for ref in package_service.get_item_refs(doc):
+                    if ref.get('location') == 'published':
+                        ref['location'] = 'archived'
+                    else:
+                        if is_takes_package:
+                            package_service.remove_ref_from_inmem_package(doc, ref.get(RESIDREF))
 
-    def on_delete(self, doc):
-        """
-        This method throws exception when invoked on PublishedItemService. Overriding to avoid that.
-        """
-
-        pass
-
-    def delete(self, lookup):
-        super().patch(lookup[config.ID_FIELD], {'can_be_removed': True, '_updated': utcnow()})
+                if is_takes_package:
+                    doc[SEQUENCE] = len(package_service.get_item_refs(doc))
 
     def on_deleted(self, doc):
         user = get_user()

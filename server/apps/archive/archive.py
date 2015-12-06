@@ -22,11 +22,13 @@ from superdesk import get_resource_service
 from superdesk.errors import SuperdeskApiError
 from eve.versioning import resolve_document_version, versioned_id_field
 from superdesk.activity import add_activity, ACTIVITY_CREATE, ACTIVITY_UPDATE, ACTIVITY_DELETE
-from eve.utils import parse_request, config
+from eve.utils import parse_request, config, date_to_str, ParsedRequest
 from superdesk.services import BaseService
 from superdesk.users.services import current_user_has_privilege, is_admin
-from superdesk.metadata.item import ITEM_STATE, CONTENT_STATE, CONTENT_TYPE, ITEM_TYPE, EMBARGO, LINKED_IN_PACKAGES, \
+from superdesk.metadata.item import ITEM_STATE, CONTENT_STATE, CONTENT_TYPE, ITEM_TYPE, EMBARGO, \
     PUBLISH_STATES
+from superdesk.metadata.packages import PACKAGE, PACKAGE_TYPE, TAKES_PACKAGE, GROUPS, LINKED_IN_PACKAGES, \
+    RESIDREF, SEQUENCE
 from apps.common.components.utils import get_component
 from apps.item_autosave.components.item_autosave import ItemAutosave
 from apps.common.models.base_model import InvalidEtag
@@ -44,7 +46,6 @@ import datetime
 from settings import DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES, VERSION, \
     DEFAULT_PRIORITY_VALUE_FOR_MANUAL_ARTICLES, \
     DEFAULT_URGENCY_VALUE_FOR_MANUAL_ARTICLES
-from superdesk.metadata.packages import RESIDREF, SEQUENCE
 
 
 logger = logging.getLogger(__name__)
@@ -457,7 +458,7 @@ class ArchiveService(BaseService):
 
         return True, ''
 
-    def remove_expired(self, doc):
+    def remove_spiked_expired(self, doc):
         """
         Removes the article from production if the state is spiked
         """
@@ -465,10 +466,16 @@ class ArchiveService(BaseService):
         assert doc[ITEM_STATE] == CONTENT_STATE.SPIKED, \
             "Article state is %s. Only Spiked Articles can be removed" % doc[ITEM_STATE]
 
-        doc_id = str(doc[config.ID_FIELD])
-        resource_def = app.config['DOMAIN']['archive_versions']
-        get_resource_service('archive_versions').delete(lookup={versioned_id_field(resource_def): doc_id})
-        super().delete_action({config.ID_FIELD: doc_id})
+        self._remove_content([str(doc[config.ID_FIELD])])
+
+    def _remove_content(self, ids):
+        """
+        remove the content
+        :param list ids: list of ids to be removed
+        """
+        version_field = versioned_id_field(app.config['DOMAIN']['archive_versions'])
+        get_resource_service('archive_versions').delete(lookup={version_field: {'$in': ids}})
+        super().delete_action({config.ID_FIELD: {'$in': ids}})
 
     def __is_req_for_save(self, doc):
         """
@@ -620,6 +627,218 @@ class ArchiveService(BaseService):
 
         if updates.get('force_unlock', False):
             del updates['force_unlock']
+
+    def remove_expired_content(self, expiry_datetime):
+        logger.info('Starting to remove expired items.')
+        self._remove_not_published_expired_items(expiry_datetime)
+        self._remove_published_expired_items(expiry_datetime)
+        logger.info('Completed removing expired items.')
+
+    def _remove_published_expired_items(self, expiry_datetime):
+        """
+        Remove the published expired items
+        :param datetime expiry_datetime: expiry datetime
+        :return:
+        """
+        logger.info('Starting to remove published expired items.')
+        expired_items = list(self._get_published_expired_items(expiry_datetime))
+        if len(expired_items) == 0:
+            logger.info('No items found to expire.')
+            return
+
+        # Step 1: Get the killed Items
+        killed_items = [item.get(config.ID_FIELD) for item in expired_items
+                        if item.get(ITEM_STATE) == CONTENT_STATE.KILLED]
+
+        items_to_remove = set()
+
+        # Step 2: Get the not killed Items
+        not_killed_items = [item for item in expired_items if item.get(ITEM_STATE) != CONTENT_STATE.KILLED]
+
+        package_service = PackageService()
+        takes_service = TakesPackageService()
+        broadcast_service = get_resource_service('archive_broadcast')
+        published_service = get_resource_service('published')
+
+        for item in not_killed_items:
+            item_id = item.get(config.ID_FIELD)
+
+            if self._can_remove_item(item) and item_id not in items_to_remove:
+                if item.get(ITEM_TYPE) == CONTENT_TYPE.COMPOSITE:
+                    package_service.expire_package(item, items_to_remove)
+                elif takes_service.get_take_package_id(item):
+                    # don't worry about the take.
+                    # package expiry will take care as we don't want split takes package
+                    continue
+                else:
+                    published_service.move_to_archived(item_id)
+                    items_to_remove.add(item_id)
+                    if item.get(ITEM_TYPE) in {CONTENT_TYPE.TEXT,  CONTENT_TYPE.PREFORMATTED}:
+                        # for text or pre-formatted there might be broadcast items
+                        broadcast_service.expire_broadcast_items(item, items_to_remove)
+
+        for item in killed_items:
+            # delete from the published collection and queue
+            published_service.delete_by_article_id(item.get(config.ID_FIELD), item)
+            items_to_remove.add(item.get(config.ID_FIELD))
+
+        self._remove_content(list(items_to_remove))
+
+    def _can_remove_item(self, item, processed_item=None):
+        """
+        Recursively checks if the item can be removed.
+        :param dict item: item to be remove
+        :param set processed_item: processed items
+        :return: True if item can be removed, False otherwise.
+        """
+
+        if processed_item is None:
+            processed_item = set()
+
+        item_refs = []
+        package_service = PackageService()
+        if item.get(ITEM_TYPE) == CONTENT_TYPE.COMPOSITE:
+            # Get the item references for is package
+            item_refs = package_service.get_residrefs(item)
+
+        if item.get(PACKAGE_TYPE) == TAKES_PACKAGE or \
+           item.get(ITEM_TYPE) in [CONTENT_TYPE.TEXT, CONTENT_TYPE.PREFORMATTED]:
+            broadcast_items = get_resource_service('archive_broadcast').get_broadcast_items_from_master_story(item)
+            if broadcast_items:
+                # If master story expires then check if broadcast item is included in a package.
+                # If included in a package then check the package expiry.
+                for broadcast_item in broadcast_items:
+                    if package_service.get_linked_in_package_ids(broadcast_item):
+                        item_refs.extend([broadcast_item.get(config.ID_FIELD)])
+
+        # get item reference where this referred
+        item_refs.extend(PackageService().get_linked_in_package_ids(item))
+
+        # check item refs in the ids to remove set
+        is_expired = item.get('expiry') < utcnow()
+
+        if is_expired:
+            # now check recursively for all references
+            if item.get(config.ID_FIELD) in processed_item:
+                return is_expired
+
+            processed_item.add(item.get(config.ID_FIELD))
+            if item_refs:
+                archive_items = self.get_from_mongo(req=None, lookup={'_id': {'$in': item_refs}})
+                for archive_item in archive_items:
+                    is_expired = self._can_remove_item(archive_item, processed_item)
+                    if not is_expired:
+                        break
+
+        return is_expired
+
+    def _remove_not_published_expired_items(self, expiry_datetime):
+        """
+        Remove the not published expired items
+        :param datetime expiry_datetime: expiry datetime
+        """
+        logger.info('Starting to remove not published expired items.')
+        expired_items = list(self._get_not_published_expired_items(expiry_datetime))
+        if len(expired_items) == 0:
+            logger.info('No items found to expire.')
+            return
+
+        # Step 1: Remove the spiked items first
+        items_to_remove = set(item[config.ID_FIELD] for item in expired_items
+                              if item.get(ITEM_STATE) == CONTENT_STATE.SPIKED)
+
+        not_spiked_items = [item for item in expired_items if item.get(ITEM_STATE) != CONTENT_STATE.SPIKED]
+
+        # Step 2: Remove the packaged items (including takes package)
+        package_items = [item for item in not_spiked_items
+                         if item.get(ITEM_TYPE) == CONTENT_TYPE.COMPOSITE]
+
+        package_service = PackageService()
+        takes_service = TakesPackageService()
+
+        for item in package_items:
+            item_id = item[config.ID_FIELD]
+            # get the refs
+            refs = package_service.get_residrefs(item)
+            is_takes_packages = item.get(PACKAGE_TYPE, '') == TAKES_PACKAGE
+
+            # remove it own references and update two-way link.
+            if not is_takes_packages:
+                package_service.update_groups({GROUPS: []}, item)
+
+            # remove the reference
+            if item.get(LINKED_IN_PACKAGES):
+                package_service.remove_spiked_refs_from_package(item_id)
+
+            items_to_remove.add(item_id)
+
+            if is_takes_packages:
+                # adding take items to remove
+                for ref in refs:
+                    items_to_remove.add(ref)
+                    package_service.remove_spiked_refs_from_package(ref, item_id)
+
+        # Step 4: remove the items
+        normal_items = [item for item in not_spiked_items if item.get(ITEM_TYPE) != CONTENT_TYPE.COMPOSITE]
+
+        for item in normal_items:
+            item_id = item[config.ID_FIELD]
+
+            # if take item then we based it on the takes package for this.
+            if takes_service.get_take_package_id(item):
+                continue
+
+            processed_items = set()
+
+            if self._can_remove_item(item, processed_items) and item_id not in items_to_remove:
+                items_to_remove.add(item_id)
+
+        # remove the items from archive collections
+        if items_to_remove:
+            logger.info('Remove following documents: {}'.format(items_to_remove))
+            self._remove_content(list(items_to_remove))
+
+        logger.info('Completed removing non published items.')
+
+    def _get_not_published_expired_items(self, expiry_datetime):
+        """
+        Get the non published expired items
+        :param datetime expiry_datetime: expiry datetime
+        :return pymongo.cursor: expired non published items.
+        """
+        query = {
+            '$and': [
+                {'expiry': {'$lte': date_to_str(expiry_datetime)}},
+                {ITEM_STATE: {'$nin': list(PUBLISH_STATES)}},
+                {'$or': [
+                    {'task.desk': {'$ne': None}},
+                    {ITEM_STATE: CONTENT_STATE.SPIKED, 'task.desk': None}
+                ]}
+            ]
+        }
+
+        req = ParsedRequest()
+        req.max_results = config.MAX_EXPIRY_QUERY_LIMIT
+        req.sort = 'expiry,_created'
+        return self.get_from_mongo(req=None, lookup=query)
+
+    def _get_published_expired_items(self, expiry_datetime):
+        """
+        Get the published expired items (not schedule).
+        :param datetime expiry_datetime: expiry datetime
+        :return pymongo.cursor: expired published items.
+        """
+        query = {
+            '$and': [
+                {'expiry': {'$lte': date_to_str(expiry_datetime)}},
+                {ITEM_STATE: {'$in': [CONTENT_STATE.PUBLISHED, CONTENT_STATE.CORRECTED, CONTENT_STATE.KILLED]}}
+            ]
+        }
+
+        req = ParsedRequest()
+        req.max_results = config.MAX_EXPIRY_QUERY_LIMIT
+        req.sort = 'expiry'
+        return self.get_from_mongo(req=None, lookup=query)
 
 
 class AutoSaveResource(Resource):

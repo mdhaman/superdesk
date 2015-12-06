@@ -11,10 +11,12 @@
 import superdesk
 import logging
 from eve.utils import ParsedRequest, date_to_str, config
-from superdesk.celery_task_utils import is_task_running, mark_task_as_not_running
+from superdesk.celery_task_utils import is_task_running, mark_task_as_not_running, get_lock_id
 from superdesk.utc import utcnow
 from .archive import SOURCE as ARCHIVE
 from superdesk.metadata.item import ITEM_STATE, CONTENT_STATE
+from superdesk.lock import lock, unlock
+from superdesk import get_resource_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class RemoveExpiredSpikeContent(superdesk.Command):
             while items.count() > 0:
                 for item in items:
                     logger.info('deleting {} expiry: {} now:{}'.format(item[config.ID_FIELD], item['expiry'], now))
-                    superdesk.get_resource_service(ARCHIVE).remove_expired(item)
+                    superdesk.get_resource_service(ARCHIVE).remove_spiked_expired(item)
 
                 items = self.get_expired_items(now)
 
@@ -99,6 +101,23 @@ class UpdateOverdueScheduledContent(superdesk.Command):
         finally:
             mark_task_as_not_running("archive", "update_overdue_scheduled")
 
+
+class RemoveExpiredContent(superdesk.Command):
+
+    def run(self):
+        logger.info('Starting to remove expired content.')
+        lock_name = get_lock_id('archive', 'remove_expired')
+        if not lock(lock_name, '', expire=600):
+            logger.info('Remove expired content task is already running.')
+            return
+        try:
+            now = utcnow()
+            logger.info('Removing expired content for expiry {}.'.format(now))
+            get_resource_service(ARCHIVE).remove_expired_content(now)
+        finally:
+            unlock(lock_name, '')
+
+        logger.info('Completed remove expired content.')
 
 def get_overdue_scheduled_items(expired_date_time, resource, limit=100):
     """

@@ -478,6 +478,7 @@ class BasePublishService(BaseService):
             for r in take_refs:
                 if r[GUID_FIELD] == take_article_id:
                     sequence_num_of_take_to_be_published = r[SEQUENCE]
+                    r['location'] = 'published'
                     break
 
             if takes and self.published_state != 'killed':

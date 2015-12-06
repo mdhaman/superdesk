@@ -83,6 +83,9 @@ class PackageService():
             self.extract_default_association_data(original, assoc)
 
     def on_updated(self, updates, original):
+        self.update_groups(updates, original)
+
+    def update_groups(self, updates, original):
         to_add = {assoc.get(RESIDREF): assoc for assoc in self._get_associations(updates)
                   if assoc.get(RESIDREF) and updates.get(GROUPS)}
         to_remove = (assoc for assoc in self._get_associations(original)
@@ -178,6 +181,9 @@ class PackageService():
         if not item_id:
             raise SuperdeskApiError.badRequestError("Package contains empty ResidRef!")
 
+        if endpoint != 'archive':
+            endpoint = 'archive'
+
         item = get_resource_service(endpoint).find_one(req=None, _id=item_id)
 
         if not item and throw_if_not_found:
@@ -236,15 +242,22 @@ class PackageService():
                 if linked_package:
                     self.check_for_circular_reference(linked_package, item_id)
 
-    def get_packages(self, doc_id):
+    def get_packages(self, doc_id, not_package_id=None):
         """
         Retrieves package(s) if an article identified by doc_id is referenced in a package.
 
-        :param: doc_id identifier of the item in the package
+        :param str doc_id: identifier of the item in the package
+        :param str not_package_id: not package id
         :return: articles of type composite
         """
 
-        query = {'$and': [{ITEM_TYPE: CONTENT_TYPE.COMPOSITE}, {'groups.refs.guid': doc_id}]}
+        query = {'$and': [
+                    {ITEM_TYPE: CONTENT_TYPE.COMPOSITE},
+                    {'groups.refs.residRef': doc_id}
+                ]}
+
+        if not_package_id:
+            query['$and'].append({config.ID_FIELD: {'$ne': not_package_id}})
 
         request = ParsedRequest()
         request.max_results = 100
@@ -377,14 +390,17 @@ class PackageService():
         return [assoc for group in doc.get(GROUPS, [])
                 for assoc in group.get(REFS, [])]
 
-    def remove_spiked_refs_from_package(self, doc_id):
-        packages = self.get_packages(doc_id)
-        if packages.count() > 0:
-            processed_packages = []
-            for package in packages:
-                if str(package[config.ID_FIELD]) not in processed_packages:
-                    processed_packages.extend(
-                        self.remove_refs_in_package(package, doc_id, processed_packages))
+    def remove_spiked_refs_from_package(self, doc_id, not_package_id=None):
+        packages = self.get_packages(doc_id, not_package_id)
+        if packages.count() == 0:
+            return
+
+        processed_packages = []
+        for package in packages:
+            if str(package[config.ID_FIELD]) in processed_packages:
+                continue
+
+            processed_packages.extend(self.remove_refs_in_package(package, doc_id, processed_packages))
 
     def get_residrefs(self, package):
         """
@@ -424,3 +440,33 @@ class PackageService():
         """
 
         return [ref for group in package.get(GROUPS, []) for ref in group.get(REFS, []) if RESIDREF in ref]
+
+    def get_linked_in_package_ids(self, item):
+        """
+        Returns all linked in package ids for an item (including takes package)
+        :param dict item:
+        :return list: list of package ids
+        """
+        return [package_link.get(PACKAGE) for package_link in item.get(LINKED_IN_PACKAGES, []) or []]
+
+    def expire_package(self, package, items_to_remove):
+        published_service = get_resource_service('published')
+        archive_service = get_resource_service('archive')
+
+        def move_to_archived(_id):
+            if _id in items_to_remove:
+                return
+
+            published_service.move_to_archived(_id)
+            items_to_remove.add(_id)
+
+        move_to_archived(package.get(config.ID_FIELD))
+        item_refs = self.get_item_refs(package)
+        for ref in item_refs:
+            move_to_archived(ref.get(RESIDREF))
+            item = archive_service.find_one(req=None, _id=ref.get(RESIDREF))
+
+            if ref.get('itemClass') == 'icls:composite':
+                self.expire_package(item, items_to_remove)
+            elif ref.get('itemClass') == 'icls:text':
+                get_resource_service('archive_broadcast').expire_broadcast_items(item, items_to_remove)

@@ -15,7 +15,7 @@ import superdesk
 from apps.publish.content import ArchivePublishResource, ArchivePublishService, \
     KillPublishResource, KillPublishService, CorrectPublishResource, CorrectPublishService
 from apps.publish.published_item import PublishedItemResource, PublishedItemService
-from apps.publish.commands import RemoveExpiredPublishContent  # noqa
+# from apps.publish.commands import RemoveExpiredPublishContent  # noqa
 from superdesk.celery_app import celery
 from superdesk import get_backend
 
@@ -47,6 +47,6 @@ def init_app(app):
     superdesk.privilege(name='publish_queue', label='Publish Queue', description='User can update publish queue')
 
 
-@celery.task
-def content_purge():
-    RemoveExpiredPublishContent().run()
+# @celery.task
+# def content_purge():
+#     RemoveExpiredPublishContent().run()

@@ -357,3 +357,17 @@ class ArchiveBroadcastService(BaseService):
                     ))
 
             kill_service.kill_item(item)
+
+    def expire_broadcast_items(self, item, items_to_remove):
+        broadcast_items = self.get_broadcast_items_from_master_story(item)
+        published_service = get_resource_service('published')
+        broadcast_items.append(item)
+
+        for broadcast_item in broadcast_items:
+            if broadcast_item.get(config.ID_FIELD) in items_to_remove:
+                continue
+
+            if broadcast_item.get(ITEM_STATE) in PUBLISH_STATES:
+                published_service.move_to_archived(broadcast_item.get(config.ID_FIELD))
+
+            items_to_remove.add(broadcast_item.get(config.ID_FIELD))

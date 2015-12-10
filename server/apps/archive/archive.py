@@ -27,7 +27,7 @@ from superdesk.services import BaseService
 from superdesk.users.services import current_user_has_privilege, is_admin
 from superdesk.metadata.item import ITEM_STATE, CONTENT_STATE, CONTENT_TYPE, ITEM_TYPE, EMBARGO, \
     PUBLISH_STATES
-from superdesk.metadata.packages import PACKAGE, PACKAGE_TYPE, TAKES_PACKAGE, GROUPS, LINKED_IN_PACKAGES, \
+from superdesk.metadata.packages import PACKAGE_TYPE, TAKES_PACKAGE, GROUPS, LINKED_IN_PACKAGES, \
     RESIDREF, SEQUENCE
 from apps.common.components.utils import get_component
 from apps.item_autosave.components.item_autosave import ItemAutosave
@@ -673,7 +673,7 @@ class ArchiveService(BaseService):
                 else:
                     published_service.move_to_archived(item_id)
                     items_to_remove.add(item_id)
-                    if item.get(ITEM_TYPE) in {CONTENT_TYPE.TEXT,  CONTENT_TYPE.PREFORMATTED}:
+                    if item.get(ITEM_TYPE) in {CONTENT_TYPE.TEXT, CONTENT_TYPE.PREFORMATTED}:
                         # for text or pre-formatted there might be broadcast items
                         broadcast_service.expire_broadcast_items(item, items_to_remove)
 

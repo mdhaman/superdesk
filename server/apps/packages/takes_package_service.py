@@ -284,4 +284,3 @@ class TakesPackageService():
         request = ParsedRequest()
         request.sort = SEQUENCE
         return list(get_resource_service(ARCHIVE).get_from_mongo(req=request, lookup=query))
-

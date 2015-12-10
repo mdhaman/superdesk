@@ -251,10 +251,7 @@ class PackageService():
         :return: articles of type composite
         """
 
-        query = {'$and': [
-                    {ITEM_TYPE: CONTENT_TYPE.COMPOSITE},
-                    {'groups.refs.residRef': doc_id}
-                ]}
+        query = {'$and': [{ITEM_TYPE: CONTENT_TYPE.COMPOSITE}, {'groups.refs.residRef': doc_id}]}
 
         if not_package_id:
             query['$and'].append({config.ID_FIELD: {'$ne': not_package_id}})

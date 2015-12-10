@@ -119,6 +119,7 @@ class RemoveExpiredContent(superdesk.Command):
 
         logger.info('Completed remove expired content.')
 
+
 def get_overdue_scheduled_items(expired_date_time, resource, limit=100):
     """
     Fetches the overdue scheduled articles from given collection. Overdue Conditions:

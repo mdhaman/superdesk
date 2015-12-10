@@ -11,21 +11,14 @@
 import logging
 import json
 
-from eve.versioning import versioned_id_field
 from eve.utils import ParsedRequest, config
 from bson.objectid import ObjectId
 from flask import current_app as app
-
-from apps.legal_archive import LEGAL_ARCHIVE_NAME, LEGAL_ARCHIVE_VERSIONS_NAME, LEGAL_PUBLISH_QUEUE_NAME
-from apps.packages.package_service import PackageService
 import superdesk
 from apps.packages import TakesPackageService
-from superdesk.metadata.packages import GROUPS, REFS, RESIDREF
-from superdesk.users.services import get_display_name
-from superdesk.notification import push_notification
 from superdesk.resource import Resource
 from superdesk.services import BaseService
-from superdesk.metadata.item import not_analyzed, ITEM_STATE, CONTENT_STATE, ITEM_TYPE, CONTENT_TYPE, EMBARGO
+from superdesk.metadata.item import not_analyzed, ITEM_STATE, CONTENT_STATE, EMBARGO
 from apps.archive.common import handle_existing_data, item_schema, remove_media_files, get_expiry
 from superdesk.metadata.utils import aggregations
 from apps.archive.archive import SOURCE as ARCHIVE
@@ -277,126 +270,8 @@ class PublishedItemService(BaseService):
         doc['expiry'] = get_expiry(desk_id, stage_id, offset=doc.get(EMBARGO))
 
     def move_to_archived(self, _id):
-        published_items = list(self.get_from_mongo(req=None, lookup={'item_id':_id}))
+        published_items = list(self.get_from_mongo(req=None, lookup={'item_id': _id}))
         if not published_items:
             return
         get_resource_service('archived').post(published_items)
         self.delete_by_article_id(_id)
-
-    # def remove_expired(self, doc):
-    #     """
-    #     Removes the expired published article from 'published' collection. Below is the workflow:
-    #         1.  If doc is a package then recursively move the items in the package to legal archive if the item wasn't
-    #             moved before. And then run the package through the expiry workflow.
-    #         2.  Check if doc has expired. This is needed because when doc is a package and expired but the items in the
-    #             package are not expired. If expired then update allow_post_publish_actions, can_be_removed flags.
-    #         3.  Insert/update the doc in Legal Archive repository
-    #             (a) All references to master data like users, desks ... are de-normalized before inserting into
-    #                 Legal Archive. Same is done to each version of the article.
-    #             (b) Inserts Transmission Details (fetched from publish_queue collection)
-    #         4.  If the doc has expired then remove the transmission details from Publish Queue collection.
-    #         5.  If the doc has expired  and is eligible to be removed from production then remove the article and
-    #             its versions from archive and archive_versions collections respectively.
-    #         6.  Removes the item from published collection, if can_be_removed is True
-    #
-    #     :param doc: doc in 'published' collection
-    #     """
-    #
-    #     log_msg_format = "{{'_id': {item_id}, 'unique_name': {unique_name}, 'version': {_current_version}, " \
-    #                      "'expired_on': {expiry}}}."
-    #     log_msg = log_msg_format.format(**doc)
-    #
-    #     version_id_field = versioned_id_field(app.config['DOMAIN'][ARCHIVE])
-    #     can_be_removed = doc['can_be_removed']
-    #
-    #     if not can_be_removed:
-    #         if doc[ITEM_TYPE] == CONTENT_TYPE.COMPOSITE:  # Step 1
-    #             logging.info('Starting the workflow for removal of the expired package ' + log_msg)
-    #             self._handle_expired_package(doc)
-    #
-    #         logging.info('Starting the workflow for removal of the expired item ' + log_msg)
-    #         is_expired = doc['expiry'] <= utcnow()
-    #
-    #         if is_expired:  # Step 2
-    #             updates = self._update_flags(doc, log_msg)
-    #             doc.update(updates)
-    #             can_be_removed = updates.get('can_be_removed', can_be_removed)
-    #
-    #         # Step 3
-    #         # publish_queue_items = self._upsert_into_legal_archive(doc, version_id_field, log_msg_format, log_msg)
-    #         publish_queue_items = []
-    #         if is_expired:  # Step 4
-    #             logging.info('Removing the transmission details for expired item ' + log_msg)
-    #             for publish_queue_item in publish_queue_items:
-    #                 get_resource_service('publish_queue').delete_action(
-    #                     lookup={config.ID_FIELD: publish_queue_item[config.ID_FIELD]})
-    #
-    #         if is_expired and self.can_remove_from_production(doc):  # Step 5
-    #             logging.info('Removing the expired item from production ' + log_msg)
-    #             lookup = {'$and': [{version_id_field: doc['item_id']},
-    #                                {config.VERSION: {'$lte': doc[config.VERSION]}}]}
-    #             get_resource_service('archive_versions').delete(lookup)
-    #
-    #             get_resource_service(ARCHIVE).delete_action({config.ID_FIELD: doc['item_id']})
-    #
-    #     if can_be_removed:  # Step 6
-    #         logging.info('Removing the expired item from published collection ' + log_msg)
-    #         self.delete_by_article_id(_id=doc['item_id'], doc=doc)
-    #
-    #     logging.info('Completed the workflow for removing the expired publish item ' + log_msg)
-    #
-    # def _handle_expired_package(self, package):
-    #     """
-    #     Recursively moves the items in the package to legal archive if the item wasn't moved before.
-    #     """
-    #
-    #     item_refs = (ref for group in package.get(GROUPS, []) for ref in group.get(REFS, []) if RESIDREF in ref)
-    #     for ref in item_refs:
-    #         query = {'$and': [{'item_id': ref[RESIDREF]}, {config.VERSION: ref[config.VERSION]}]}
-    #         items = self.get_from_mongo(req=None, lookup=query)
-    #         for item in items:
-    #             # If allow_post_publish_actions is False then the item has been copied to Legal Archive already
-    #             if item['allow_post_publish_actions']:
-    #                 self.remove_expired(item)
-    #
-    # def _update_flags(self, doc, log_msg):
-    #     """
-    #     Update allow_post_publish_actions to False. Also, update can_be_removed to True if item is killed.
-    #
-    #     :param doc: expired item from published collection.
-    #     :return: updated flag values as dict
-    #     """
-    #
-    #     flag_updates = {'allow_post_publish_actions': False, '_updated': utcnow()}
-    #     super().patch(doc[config.ID_FIELD], flag_updates)
-    #     push_notification('item:published:no_post_publish_actions', item=str(doc[config.ID_FIELD]))
-    #
-    #     update_can_be_removed = (doc[ITEM_STATE] == CONTENT_STATE.KILLED)
-    #     if doc.get(ITEM_STATE) in [CONTENT_STATE.PUBLISHED, CONTENT_STATE.CORRECTED]:
-    #         # query to check if the item is killed the future versions or not
-    #         query = {
-    #             'query': {
-    #                 'filtered': {
-    #                     'filter': {
-    #                         'and': [
-    #                             {'term': {'item_id': doc['item_id']}},
-    #                             {'term': {ITEM_STATE: CONTENT_STATE.KILLED}}
-    #                         ]
-    #                     }
-    #                 }
-    #             }
-    #         }
-    #
-    #         request = ParsedRequest()
-    #         request.args = {'source': json.dumps(query)}
-    #         items = super().get(req=request, lookup=None)
-    #
-    #         update_can_be_removed = (items.count() > 0)
-    #
-    #     if update_can_be_removed:
-    #         get_resource_service('archived').delete({config.ID_FIELD: doc[config.ID_FIELD]})
-    #         flag_updates['can_be_removed'] = True
-    #
-    #     logger.info('Updated flags for the published item ' + log_msg)
-    #
-    #     return flag_updates

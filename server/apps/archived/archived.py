@@ -49,8 +49,6 @@ class ArchivedService(PublishedItemService):
         package_service = PackageService()
 
         for doc in docs:
-            doc.pop(config.ID_FIELD, None)
-            doc.pop('_type', None)
             doc.pop('lock_user', None)
             doc.pop('lock_time', None)
             doc.pop('lock_session', None)

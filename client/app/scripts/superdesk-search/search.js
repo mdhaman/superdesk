@@ -1455,7 +1455,8 @@
                             if (!scope.repo) {
                                 scope.repo = {'search': 'local'};
                             } else {
-                                if (!scope.repo.archive && !scope.repo.ingest && !scope.repo.published && !scope.repo.archived) {
+                                if (!scope.repo.archive && !scope.repo.ingest &&
+                                    !scope.repo.published && !scope.repo.archived) {
                                     scope.repo.search = params.repo;
                                 } else {
                                     scope.repo.search = 'local';

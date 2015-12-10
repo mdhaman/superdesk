@@ -77,12 +77,12 @@ describe('content', function() {
             item.state = 'submitted';
             expect(archiveService.getType(item)).toBe('archive');
 
+            item._type = 'archived';
             item.state = 'published';
-            item.allow_post_publish_actions = true;
-            expect(archiveService.getType(item)).toBe('archive');
-
-            item.allow_post_publish_actions = false;
             expect(archiveService.getType(item)).toBe('archived');
+
+            item._type = 'published';
+            expect(archiveService.getType(item)).toBe('archive');
 
             item._type = 'legal_archive';
             expect(archiveService.getType(item)).toBe('legal_archive');

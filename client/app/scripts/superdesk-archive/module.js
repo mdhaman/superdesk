@@ -153,7 +153,7 @@ define([
          * @return String
          *      'ingest' if the state of the item is Ingested
          *      'spike' if the state of the item is Spiked
-         *      'archived' if the state of the item is Published and allow_post_publish_actions is false
+         *      'archived' if item is archived (no post publish actions)
          *      'archive' if none of the above is returned
          */
         this.getType = function(item) {
@@ -166,14 +166,10 @@ define([
                 itemType = 'spike';
             } else if (item.state === 'ingested') {
                 itemType = 'ingest';
+            } else if (item._type === 'archived') {
+                itemType = 'archived';
             } else {
-                var isPublished = this.isPublished(item);
-
-                if (!isPublished || (isPublished && item.allow_post_publish_actions === true)) {
-                    itemType = 'archive';
-                } else if (isPublished && item.allow_post_publish_actions === false) {
-                    itemType = 'archived';
-                }
+                itemType = 'archive';
             }
 
             return itemType;

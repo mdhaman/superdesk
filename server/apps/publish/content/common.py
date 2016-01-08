@@ -626,7 +626,7 @@ class BasePublishService(BaseService):
         # Step 7
         if not target_media_type and not queued:
             logger.exception('Nothing is saved to publish queue for story: {} for action: {}'.
-                             format(doc[config.ID_FIELD], self.publish_type))
+                             format(doc.get(config.ID_FIELD, 'hello'), self.publish_type))
 
         return queued
 

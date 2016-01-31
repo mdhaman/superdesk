@@ -20,7 +20,7 @@ from pytz import timezone
 import superdesk
 from superdesk.users.services import get_sign_off
 from superdesk.utc import utcnow, get_expiry_date
-from settings import ORGANIZATION_NAME_ABBREVIATION
+from settings import DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
 from superdesk import get_resource_service
 from superdesk.metadata.item import metadata_schema, ITEM_STATE, CONTENT_STATE, \
     LINKED_IN_PACKAGES, BYLINE, SIGN_OFF, EMBARGO, ITEM_TYPE, CONTENT_TYPE
@@ -82,7 +82,7 @@ def on_create_item(docs, repo_type=ARCHIVE):
             doc[ITEM_OPERATION] = ITEM_CREATE
 
 
-def format_dateline_to_locmmmddsrc(located, current_timestamp, source=ORGANIZATION_NAME_ABBREVIATION):
+def format_dateline_to_locmmmddsrc(located, current_timestamp, source=DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES):
     """
     Formats dateline to "Location, Month Date Source -"
 
@@ -546,7 +546,9 @@ def copy_metadata_from_user_preferences(doc, repo_type=ARCHIVE):
         if doc.get('operation', '') != 'fetch':
             if 'dateline' not in doc:
                 current_date_time = dateline_ts = utcnow()
-                doc['dateline'] = {'date': current_date_time, 'source': ORGANIZATION_NAME_ABBREVIATION, 'located': None,
+                doc['dateline'] = {'date': current_date_time,
+                                   'source': DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES,
+                                   'located': None,
                                    'text': None}
 
                 if user and user.get('user_preferences', {}).get('dateline:located'):

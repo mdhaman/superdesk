@@ -167,8 +167,17 @@ class ArchiveService(BaseService):
             if doc.get('version') == 0:
                 doc[config.VERSION] = doc['version']
 
+            source = DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
+
+            if doc.get('task', {}).get('desk', ''):
+                desk = get_resource_service('desks').find_one(req=None, _id=doc.get('task', {}).get('desk', ''))
+                source = desk.get('source', source)
+
             if not doc.get('ingest_provider'):
-                doc['source'] = DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
+                doc['source'] = source
+
+            if doc.get('dateline'):
+                doc['dateline']['source'] = source
 
             doc.setdefault('priority', DEFAULT_PRIORITY_VALUE_FOR_MANUAL_ARTICLES)
             doc.setdefault('urgency', DEFAULT_URGENCY_VALUE_FOR_MANUAL_ARTICLES)

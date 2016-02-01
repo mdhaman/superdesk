@@ -42,8 +42,7 @@ from apps.packages import PackageService, TakesPackageService
 from .archive_media import ArchiveMediaService
 from superdesk.utc import utcnow
 import datetime
-from settings import DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES, VERSION, \
-    DEFAULT_PRIORITY_VALUE_FOR_MANUAL_ARTICLES, \
+from settings import VERSION, DEFAULT_PRIORITY_VALUE_FOR_MANUAL_ARTICLES, \
     DEFAULT_URGENCY_VALUE_FOR_MANUAL_ARTICLES
 
 
@@ -166,18 +165,6 @@ class ArchiveService(BaseService):
             # let client create version 0 docs
             if doc.get('version') == 0:
                 doc[config.VERSION] = doc['version']
-
-            source = DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
-
-            if doc.get('task', {}).get('desk', ''):
-                desk = get_resource_service('desks').find_one(req=None, _id=doc.get('task', {}).get('desk', ''))
-                source = desk.get('source', source)
-
-            if not doc.get('ingest_provider'):
-                doc['source'] = source
-
-            if doc.get('dateline'):
-                doc['dateline']['source'] = source
 
             doc.setdefault('priority', DEFAULT_PRIORITY_VALUE_FOR_MANUAL_ARTICLES)
             doc.setdefault('urgency', DEFAULT_URGENCY_VALUE_FOR_MANUAL_ARTICLES)

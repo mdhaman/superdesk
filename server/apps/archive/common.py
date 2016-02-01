@@ -75,11 +75,43 @@ def on_create_item(docs, repo_type=ARCHIVE):
 
         set_default_state(doc, CONTENT_STATE.DRAFT)
         doc.setdefault(config.ID_FIELD, doc[GUID_FIELD])
-
         copy_metadata_from_user_preferences(doc, repo_type)
 
         if not doc.get(ITEM_OPERATION):
             doc[ITEM_OPERATION] = ITEM_CREATE
+
+        # set the source for the manually created articles
+        if repo_type == ARCHIVE and not doc.get('ingest_provider'):
+            # set the source for the article
+            set_source(doc)
+
+
+def set_source(doc):
+    """
+    set the source for the article
+    :param dict doc:
+    """
+    # set the source for the article as default
+    source = DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES
+    desk_id = doc.get('task', {}).get('desk')
+
+    if desk_id:
+        # if desk level source is specified then use that instead of the default source
+        desk = get_resource_service('desks').find_one(req=None, _id=desk_id)
+        source = desk.get('source') or source
+
+    doc['source'] = source
+
+    if not doc.get('dateline'):
+        return
+
+    doc['dateline']['source'] = source
+
+    if not (doc['dateline'].get('located') and doc['dateline'].get('date')):
+        return
+
+    doc['dateline']['text'] = format_dateline_to_locmmmddsrc(doc['dateline'].get('located'),
+                                                             doc['dateline'].get('date'), source)
 
 
 def format_dateline_to_locmmmddsrc(located, current_timestamp, source=DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES):
@@ -122,6 +154,8 @@ def on_duplicate_item(doc):
     set_sign_off(doc)
     doc['force_unlock'] = True
     doc[ITEM_OPERATION] = ITEM_DUPLICATE
+    # setting the source for the duplicated item to either default or the desk level source
+    set_source(doc)
 
 
 def update_dates_for(doc):
@@ -526,7 +560,7 @@ def convert_task_attributes_to_objectId(doc):
         task[LAST_AUTHORING_DESK] = ObjectId(task.get(LAST_AUTHORING_DESK))
 
 
-def copy_metadata_from_user_preferences(doc, repo_type=ARCHIVE):
+def copy_metadata_from_user_preferences(doc, repo_type=ARCHIVE, source=DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES):
     """
     Copies following properties: byline, dateline.located,
     place from user preferences to doc if the repo_type is Archive and
@@ -547,7 +581,7 @@ def copy_metadata_from_user_preferences(doc, repo_type=ARCHIVE):
             if 'dateline' not in doc:
                 current_date_time = dateline_ts = utcnow()
                 doc['dateline'] = {'date': current_date_time,
-                                   'source': DEFAULT_SOURCE_VALUE_FOR_MANUAL_ARTICLES,
+                                   'source': source,
                                    'located': None,
                                    'text': None}
 
@@ -555,7 +589,7 @@ def copy_metadata_from_user_preferences(doc, repo_type=ARCHIVE):
                     located = user.get('user_preferences', {}).get('dateline:located', {}).get('located')
                     if located:
                         doc['dateline']['located'] = located
-                        doc['dateline']['text'] = format_dateline_to_locmmmddsrc(located, dateline_ts)
+                        doc['dateline']['text'] = format_dateline_to_locmmmddsrc(located, dateline_ts, source)
 
             if BYLINE not in doc and user and user.get(BYLINE):
                     doc[BYLINE] = user[BYLINE]

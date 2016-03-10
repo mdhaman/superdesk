@@ -72,7 +72,7 @@ script:
         cd server && behave ./features/ --format progress2 --logging-level ERROR && cd .. ;
       fi
     - if [ "${TARGET}" != "${TARGET/e2e_first/}" ]; then
-        cd client &&
+        cd client && ulimit -a && free -m && ulimit -s 1082768 &&
         ./node_modules/.bin/webdriver-manager update &&
         ./node_modules/.bin/protractor-flake --node-bin node --max-attempts=3 -- protractor-conf.js --suite=a
           --stackTrace --verbose

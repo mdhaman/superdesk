@@ -27,8 +27,6 @@ addons:
 cache:
   directories:
     - $HOME/.cache/pip
-    - $HOME/.npm
-    - $HOME/.cache/bower
 
 before_install:
     - if [ "${TARGET}" = "unit" ] || [ "${TARGET}" != "${TARGET/e2e/}" ]; then
